@@ -62,6 +62,16 @@ const SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   /**
+   * Standalone output for Docker deployments.
+   *
+   * Produces a self-contained server in `.next/standalone/` that only
+   * copies the files Next.js needs at runtime (no full node_modules).
+   * The Dockerfile copies this directory plus `public/` and
+   * `.next/static/` into a minimal Node Alpine image. See Dockerfile.
+   */
+  output: "standalone",
+
+  /**
    * Cache-Control policy.
    *
    * Why this exists:

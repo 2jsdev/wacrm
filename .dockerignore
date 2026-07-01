@@ -1,0 +1,49 @@
+# Build artefacts and dependency trees that bloat the build context.
+node_modules
+.next
+.turbo
+out
+dist
+build
+
+# Local env files — never bundle secrets in the image. Inject them
+# at runtime via Dockploy's environment-variable UI instead.
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Tooling caches and editor configs.
+.eslintcache
+.cache
+.parcel-cache
+.npm
+.pnpm-store
+.yarn
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS junk.
+.DS_Store
+Thumbs.db
+
+# Git and CI metadata.
+.git
+.gitignore
+.gitattributes
+.github
+
+# Documentation that's not needed at runtime.
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+LICENSE
+docs
+*.md
+
+# Test output.
+coverage
+.nyc_output
