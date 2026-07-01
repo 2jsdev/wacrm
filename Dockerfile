@@ -5,18 +5,25 @@
 # Build context: project root (where package.json lives).
 # Required: next.config.ts must set `output: "standalone"`.
 #
-# Stage 1 — deps:   install full dependency tree for the build.
+# Stage 1 — deps:    install full dependency tree for the build.
 # Stage 2 — builder: produce the standalone server bundle. Secrets
-#                   (Supabase URL/keys, Meta secret, ENCRYPTION_KEY,
-#                   etc.) are loaded at build-time from a BuildKit
-#                   secret file so they never land in the image.
+#                    (Supabase URL/keys, Meta secret, ENCRYPTION_KEY,
+#                    etc.) are passed in as build args from Dockploy
+#                    and promoted to ENV so Next.js sees them at
+#                    build-time. They live in this stage's layer
+#                    history only — the runner stage below has no
+#                    reference to them.
 # Stage 3 — runner:  ship a slim Alpine image with only what's needed
-#                   to run `node server.js` on port 3000.
+#                    to run `node server.js` on port 3000. ARGs and
+#                    ENVs are scoped per-stage in Docker, so secrets
+#                    declared only in `builder` are not visible here.
 #
-# In Dockploy, configure build secrets in the service settings
-# ("Environment Variables" / "Build Secrets"). The .env file in the
-# repo is NEVER copied into the image — it's only consumed by the
-# builder stage as a mounted secret.
+# In Dockploy, configure build args in the service settings
+# ("Environment Variables" → "Build Args"). Each entry from your
+# .env becomes a build arg. Runtime env vars are set in the same
+# UI under "Environment Variables" — the values are typically
+# identical, but build args only matter at build time and runtime
+# env vars only matter when the container starts.
 
 ARG NODE_VERSION=20-alpine
 
@@ -41,16 +48,38 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Load the secrets file as a BuildKit secret into /tmp/.env. This
-# path is never copied into the final image — only this layer's
-# `npm run build` invocation sees it, which is exactly what we want
-# because Next.js inlines NEXT_PUBLIC_* vars into the client bundle
-# at build time.
-#
-# Usage in Dockploy: mount `.env` (or a key=value list) as the
-# `env_file` build secret.
-RUN --mount=type=secret,id=env_file,target=/tmp/.env \
-    set -a && . /tmp/.env && set +a && npm run build
+# Build-time secrets (NEXT_PUBLIC_* must be present for Next.js to
+# inline them into the client bundle). Each ARG has an empty default
+# so the build doesn't fail when an optional var is not configured.
+# ARGs in this stage do NOT propagate to the runner stage below.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG SUPABASE_SERVICE_ROLE_KEY
+ARG ENCRYPTION_KEY
+ARG META_APP_SECRET
+ARG NEXT_PUBLIC_SITE_URL
+ARG AUTOMATION_CRON_SECRET
+ARG META_APP_ID
+ARG WHATSAPP_TEMPLATES_DRY_RUN
+ARG ALLOWED_INVITE_HOSTS
+
+# Promote ARGs to ENVs so Next.js (and any tooling that reads env)
+# sees them. `ENV KEY=` (no value) leaves the var unset when the ARG
+# was empty, which is what we want for the truly optional ones.
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
+    SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY} \
+    ENCRYPTION_KEY=${ENCRYPTION_KEY} \
+    META_APP_SECRET=${META_APP_SECRET} \
+    NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
+    AUTOMATION_CRON_SECRET=${AUTOMATION_CRON_SECRET} \
+    META_APP_ID=${META_APP_ID} \
+    WHATSAPP_TEMPLATES_DRY_RUN=${WHATSAPP_TEMPLATES_DRY_RUN} \
+    ALLOWED_INVITE_HOSTS=${ALLOWED_INVITE_HOSTS}
+
+# Standalone output is configured in next.config.ts; `npm run build`
+# writes .next/standalone/ + .next/static/ we copy in stage 3.
+RUN npm run build
 
 
 # ---------- Stage 3: runner ----------
@@ -75,6 +104,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 # Hashed client bundles referenced from HTML.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Clean any build-time secrets that Next.js inlines into server.js.
+# ARGs declared in `builder` are already scoped to that stage and
+# cannot leak here, but Next.js's standalone server.js sometimes
+# captures process.env refs at runtime — the runtime env vars
+# configured in Dockploy's "Environment Variables" tab supply
+# those values when the container starts.
 USER nextjs
 
 EXPOSE 3000
